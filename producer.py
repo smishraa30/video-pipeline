@@ -12,7 +12,7 @@ load_dotenv()
 db_password = os.getenv("DB_PASSWORD")
 app = FastAPI()
 
-producer = KafkaProducer(bootstrap_servers='localhost:9092')
+producer = KafkaProducer(bootstrap_servers='kafka:9092')
 TOPIC_NAME = 'video-stream'
 is_streaming = False
 
