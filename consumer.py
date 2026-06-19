@@ -11,15 +11,15 @@ from ultralytics import YOLO
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 load_dotenv()
 db_password = os.getenv("DB_PASSWORD")
 
 logging.info("Booting up AI Worker Node...")
-model = YOLO("yolov8n.pt") 
+model = YOLO("yolov8n.pt")
 
 conn = None
 consumer = None
@@ -27,42 +27,57 @@ consumer = None
 try:
     logging.info("Connecting to PostgreSQL...")
     conn = psycopg2.connect(
-        host="localhost", port=5432, 
-        user="admin", password=db_password, dbname="vision_db"
+        host="postgres",
+        port=5432,
+        user="admin",
+        password=db_password,
+        dbname="vision_db",
     )
     conn.autocommit = True
     cursor = conn.cursor()
+    # NEW: Automatically create the table if it doesn't exist yet!
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS traffic_logs (
+            id SERIAL PRIMARY KEY,
+            camera_id VARCHAR(50),
+            timestamp FLOAT,
+            person_count INT,
+            car_count INT
+        );
+        """)
     logging.info("Database Ready.")
 
     consumer = KafkaConsumer(
-        'video-stream',
-        bootstrap_servers='localhost:9092',
-        auto_offset_reset='latest'
+        "video-stream", bootstrap_servers="kafka:9092", auto_offset_reset="latest"
     )
     logging.info("Connected to Kafka. Waiting for data...")
 
     for message in consumer:
-        data = json.loads(message.value.decode('utf-8'))
+        data = json.loads(message.value.decode("utf-8"))
         cam_id = data["camera_id"]
         timestamp = data["timestamp"]
-        
+
         img_bytes = base64.b64decode(data["image_data"])
         nparr = np.frombuffer(img_bytes, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
+
         results = model(frame, stream=True, verbose=False)
-        
+
         person_count = 0
         car_count = 0
-        
+
         for r in results:
             classes = r.boxes.cls.tolist()
-            person_count += classes.count(0) 
-            car_count += classes.count(2)    
-            
+            person_count += classes.count(0)
+            car_count += classes.count(2)
+
         cursor.execute(
             "INSERT INTO traffic_logs (camera_id, timestamp, person_count, car_count) VALUES (%s, %s, %s, %s)",
-            (cam_id, timestamp, person_count, car_count)
+            (cam_id, timestamp, person_count, car_count),
+        )
+
+        logging.info(
+            f"Saved -> Camera: {cam_id} | Persons: {person_count} | Cars: {car_count}"
         )
         
         logging.info(f"Saved -> Camera: {cam_id} | Persons: {person_count} | Cars: {car_count}")
