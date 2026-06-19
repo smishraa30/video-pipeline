@@ -1,4 +1,4 @@
-# 🚦 Distributed AI Video Pipeline (Project Beta)
+# 🚦 Distributed AI Video Pipeline
 
 ![Python](https://img.shields.io/badge/Python-3.10-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green)
