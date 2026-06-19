@@ -17,7 +17,7 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    # NEW: Tell Docker how to check if Kafka is actually awake
+
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 10s
@@ -30,11 +30,10 @@ services:
       - "5432:5432"
     environment:
       POSTGRES_USER: admin
-      POSTGRES_PASSWORD: ${DB_PASSWORD} # <-- Securely uses your .env file!
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: vision_db
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # NEW: Tell Docker how to check if the DB is ready for connections
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U admin -d vision_db"]
       interval: 5s
