@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from kafka import KafkaConsumer
 from ultralytics import YOLO
 
-# 1. ENTERPRISE LOGGING SETUP
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -22,12 +21,10 @@ db_password = os.getenv("DB_PASSWORD")
 logging.info("Booting up AI Worker Node...")
 model = YOLO("yolov8n.pt") 
 
-# Declare connections as None initially so the 'finally' block doesn't crash if they fail to open
 conn = None
 consumer = None
 
 try:
-    # --- DATABASE SETUP ---
     logging.info("Connecting to PostgreSQL...")
     conn = psycopg2.connect(
         host="localhost", port=5432, 
@@ -37,7 +34,6 @@ try:
     cursor = conn.cursor()
     logging.info("Database Ready.")
 
-    # --- KAFKA SETUP ---
     consumer = KafkaConsumer(
         'video-stream',
         bootstrap_servers='localhost:9092',
@@ -45,7 +41,6 @@ try:
     )
     logging.info("Connected to Kafka. Waiting for data...")
 
-    # --- THE HEADLESS PROCESSING LOOP ---
     for message in consumer:
         data = json.loads(message.value.decode('utf-8'))
         cam_id = data["camera_id"]
@@ -70,10 +65,8 @@ try:
             (cam_id, timestamp, person_count, car_count)
         )
         
-        # Use logging.info instead of print!
         logging.info(f"Saved -> Camera: {cam_id} | Persons: {person_count} | Cars: {car_count}")
 
-# 2. GRACEFUL SHUTDOWN HANDLING
 except KeyboardInterrupt:
     logging.warning("Shutdown signal received (Ctrl+C). Halting worker...")
 except Exception as e:
