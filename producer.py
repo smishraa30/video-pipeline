@@ -8,12 +8,10 @@ import psycopg2
 import os
 from dotenv import load_dotenv
 
-# Load the hidden password
 load_dotenv()
 db_password = os.getenv("DB_PASSWORD")
 app = FastAPI()
 
-# Connect to the local Kafka Docker container
 producer = KafkaProducer(bootstrap_servers='localhost:9092')
 TOPIC_NAME = 'video-stream'
 is_streaming = False
@@ -35,26 +33,21 @@ def capture_and_send_frames():
             
         frame_counter += 1
         
-        # Only process every 5th frame
         if frame_counter % 5 != 0:
             time.sleep(0.03) 
             continue
         
-        # Compress the image
         frame = cv2.resize(frame, (640, 480))
         _, buffer = cv2.imencode('.jpg', frame)
         
-        # Convert bytes to text
         jpg_as_text = base64.b64encode(buffer).decode('utf-8')
         
-        # Build the structured JSON payload
         payload = {
             "camera_id": "CAM-01",
             "timestamp": time.time(),
             "image_data": jpg_as_text
         }
         
-        # Send to Kafka
         producer.send(TOPIC_NAME, json.dumps(payload).encode('utf-8'))
         time.sleep(0.03)
 
@@ -77,16 +70,13 @@ def stop_stream():
 
 @app.get("/analytics/stats")
 def get_traffic_stats():
-    """Queries the database for real-time traffic statistics."""
     try:
-        # Connect to the Filing Cabinet
         conn = psycopg2.connect(
             host="localhost", port=5432, 
             user="admin", password=db_password, dbname="vision_db"
         )
         cursor = conn.cursor()
         
-        # SQL: Sum up all cars and people ever detected
         cursor.execute("SELECT SUM(car_count), SUM(person_count) FROM traffic_logs;")
         result = cursor.fetchone()
         
