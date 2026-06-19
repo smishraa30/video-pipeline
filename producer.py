@@ -16,30 +16,42 @@ producer = KafkaProducer(bootstrap_servers='localhost:9092')
 TOPIC_NAME = 'video-stream'
 is_streaming = False
 
-def capture_and_send_frames():
+def capture_and_send_frames(source: str):
     global is_streaming
-    video_path = "test_video.mp4" 
-    cap = cv2.VideoCapture(video_path) 
+     
+    if source.isdigit():
+        video_source = int(source)
+        print(f"[SYSTEM] Initializing Live Webcam Feed (Device ID: {video_source})...")
+    else:
+        video_source = source
+        print(f"[SYSTEM] Loading Video File: {video_source}...")
+        
+    cap = cv2.VideoCapture(video_source) 
     
-    print(f"[SYSTEM] Video file loaded: {video_path}. Sending structured data to Kafka...")
-    
+    if not cap.isOpened():
+        print(f"[ERROR] Could not open video source: {source}")
+        is_streaming = False
+        return
+
     frame_counter = 0 
     
     while is_streaming:
         success, frame = cap.read()
         if not success:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            continue
+            if isinstance(video_source, str):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
+            else:
+                print("[SYSTEM] Webcam feed interrupted.")
+                break
             
         frame_counter += 1
-        
         if frame_counter % 5 != 0:
-            time.sleep(0.03) 
+            time.sleep(0.01) 
             continue
         
         frame = cv2.resize(frame, (640, 480))
         _, buffer = cv2.imencode('.jpg', frame)
-        
         jpg_as_text = base64.b64encode(buffer).decode('utf-8')
         
         payload = {
@@ -49,19 +61,19 @@ def capture_and_send_frames():
         }
         
         producer.send(TOPIC_NAME, json.dumps(payload).encode('utf-8'))
-        time.sleep(0.03)
+        time.sleep(0.01)
 
     cap.release()
     print("[SYSTEM] Stream deactivated.")
 
 @app.post("/start")
-def start_stream(background_tasks: BackgroundTasks):
+def start_stream(background_tasks: BackgroundTasks, source: str = "test_video.mp4"):
     global is_streaming
     if not is_streaming:
         is_streaming = True
-        background_tasks.add_task(capture_and_send_frames)
-    return {"status": "SUCCESS", "message": "Camera started and streaming to Kafka."}
-
+        # Pass the user's custom source down to the background task thread
+        background_tasks.add_task(capture_and_send_frames, source)
+    return {"status": "SUCCESS", "message": f"Streaming started from source: {source}"}
 @app.post("/stop")
 def stop_stream():
     global is_streaming
