@@ -1,0 +1,8 @@
+FROM python:3.10-slim
+WORKDIR /app
+# Install system dependencies for OpenCV
+RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0
+# Install Python libraries
+RUN pip install fastapi uvicorn kafka-python opencv-python
+COPY producer.py test_video.mp4 ./
+CMD ["uvicorn", "producer:app", "--host", "0.0.0.0", "--port", "8000"]

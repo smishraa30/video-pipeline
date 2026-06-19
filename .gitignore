@@ -1,0 +1,15 @@
+# Python Virtual Environment
+venv/
+__pycache__/
+
+# Secrets and Configuration
+.env
+
+# Video and Media Files
+*.mp4
+*.avi
+*.mov
+test_video.mp4
+
+# Editor config
+.vscode/
