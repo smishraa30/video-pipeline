@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 from kafka import KafkaConsumer
 from ultralytics import YOLO
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -25,6 +28,9 @@ conn = None
 consumer = None
 
 try:
+    # -----------------------------------------------------------------------
+    # Database
+    # -----------------------------------------------------------------------
     logging.info("Connecting to PostgreSQL...")
     conn = psycopg2.connect(
         host="postgres",
@@ -35,62 +41,102 @@ try:
     )
     conn.autocommit = True
     cursor = conn.cursor()
-    # NEW: Automatically create the table if it doesn't exist yet!
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS traffic_logs (
-            id SERIAL PRIMARY KEY,
-            camera_id VARCHAR(50),
-            timestamp FLOAT,
-            person_count INT,
-            car_count INT
+            id            SERIAL PRIMARY KEY,
+            camera_id     VARCHAR(50),
+            timestamp     FLOAT,
+            person_count  INT,
+            car_count     INT
         );
-        """)
-    logging.info("Database Ready.")
+    """)
+    logging.info("Database ready.")
 
+    # -----------------------------------------------------------------------
+    # Kafka consumer
+    # FIX: Changed auto_offset_reset from "latest" to "earliest".
+    #      "latest" means if this worker restarts it silently skips every
+    #      frame that arrived while it was down. "earliest" replays from the
+    #      last committed offset so no frames are lost.
+    # -----------------------------------------------------------------------
     consumer = KafkaConsumer(
-        "video-stream", bootstrap_servers="kafka:9092", auto_offset_reset="latest"
-    )
-    logging.info("Connected to Kafka. Waiting for data...")
+        "video-stream",
+        bootstrap_servers="kafka:9092",
+        auto_offset_reset="earliest",       # FIX: was "latest"
+        enable_auto_commit=True,
+        group_id="ai-worker-group",         # FIX: added group_id so Kafka tracks
+    )                                       #      the committed offset per consumer group
+    logging.info("Connected to Kafka. Waiting for frames...")
 
+    # -----------------------------------------------------------------------
+    # Main processing loop
+    # -----------------------------------------------------------------------
     for message in consumer:
-        data = json.loads(message.value.decode("utf-8"))
-        cam_id = data["camera_id"]
-        timestamp = data["timestamp"]
+        # --- Deserialise ---------------------------------------------------
+        try:
+            data = json.loads(message.value.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logging.warning(f"Skipping malformed Kafka message: {e}")
+            continue
 
-        img_bytes = base64.b64decode(data["image_data"])
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        cam_id    = data.get("camera_id", "UNKNOWN")
+        timestamp = data.get("timestamp", 0.0)
 
-        results = model(frame, stream=True, verbose=False)
+        # --- Decode frame --------------------------------------------------
+        try:
+            img_bytes = base64.b64decode(data["image_data"])
+            nparr     = np.frombuffer(img_bytes, np.uint8)
+            frame     = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        except Exception as e:
+            logging.warning(f"[{cam_id}] Failed to decode image bytes: {e}. Skipping frame.")
+            continue
+
+        # FIX: imdecode returns None when the buffer is corrupt/truncated.
+        #      Without this guard, model(None) raises an unhandled exception
+        #      that crashes the entire worker.
+        if frame is None:
+            logging.warning(f"[{cam_id}] cv2.imdecode returned None (corrupt frame). Skipping.")
+            continue
+
+        # --- AI inference --------------------------------------------------
+        try:
+            results = model(frame, stream=True, verbose=False)
+        except Exception as e:
+            logging.error(f"[{cam_id}] YOLO inference failed: {e}. Skipping frame.")
+            continue
 
         person_count = 0
-        car_count = 0
+        car_count    = 0
 
         for r in results:
-            classes = r.boxes.cls.tolist()
-            person_count += classes.count(0)
-            car_count += classes.count(2)
+            classes       = r.boxes.cls.tolist()
+            person_count += classes.count(0)   # COCO class 0 = person
+            car_count    += classes.count(2)   # COCO class 2 = car
 
+        # --- Persist -------------------------------------------------------
         cursor.execute(
-            "INSERT INTO traffic_logs (camera_id, timestamp, person_count, car_count) VALUES (%s, %s, %s, %s)",
+            """
+            INSERT INTO traffic_logs (camera_id, timestamp, person_count, car_count)
+            VALUES (%s, %s, %s, %s)
+            """,
             (cam_id, timestamp, person_count, car_count),
         )
 
+        # FIX: Duplicate logging.info line removed (same line appeared twice).
         logging.info(
-            f"Saved -> Camera: {cam_id} | Persons: {person_count} | Cars: {car_count}"
+            f"Saved  →  Camera: {cam_id} | Persons: {person_count} | Cars: {car_count}"
         )
-        
-        logging.info(f"Saved -> Camera: {cam_id} | Persons: {person_count} | Cars: {car_count}")
 
 except KeyboardInterrupt:
     logging.warning("Shutdown signal received (Ctrl+C). Halting worker...")
 except Exception as e:
-    logging.error(f"Worker crashed due to an unexpected error: {e}")
+    logging.error(f"Worker crashed due to an unexpected error: {e}", exc_info=True)
 finally:
     logging.info("Executing cleanup procedures...")
     if consumer is not None:
         consumer.close()
-        logging.info("Kafka connection closed.")
+        logging.info("Kafka consumer closed.")
     if conn is not None:
         conn.close()
         logging.info("PostgreSQL connection closed.")
